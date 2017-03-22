@@ -1,0 +1,160 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Yuxin Qiu"
+date: "March 20, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Backgroud Introduction
+
+This is the final project for the Practical Machine Learning course on courseral provided by Johns Hopkins University. 
+
+The background of this project is: Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+So the goal is to predict the manner in which they did the excercise.
+
+The data that used in this project are from the following two files:
+
+Training: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+Testing: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+##Step1: Load Libraries and Data
+
+This step is to install packages that will be used later and load the data into R.
+
+```{r message=FALSE, warning=FALSE}
+library(lattice)
+library(ggplot2)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+library(e1071)
+```
+
+```{r message=FALSE, warning=FALSE}
+train <- read.csv("pml-training.csv", na.strings = c("NA", ""))
+test <- read.csv("pml-testing.csv", na.strings = c("NA", ""))
+```
+
+After reading the training and testing files in, I took a first look at the data of their column names and some summary statictics of the features. 
+```{r message=FALSE, warning=FALSE,results='hide'}
+names(train)
+str(train)
+summary(train)
+```
+
+The outcome variable is classe, which have 5 categories: 
+```{r warning=FALSE}
+summary(train$classe)
+```
+
+##Step 2: Cleaning the Data
+First I noticed from the previous step that there are some features that have a lot of missing values. So I used the following code to remove all features that have missing values from both the training and testing files.
+```{r message=FALSE, warning=FALSE}
+trainNZV <- train[, colSums(is.na(train)) == 0]
+testNZV <- test[, colSums(is.na(test)) == 0]
+```
+
+Next I also removed the first 7 columns of data as they have no value of predicting the outcome.
+```{r message=FALSE, warning=FALSE}
+trainF <- trainNZV[, -c(1:7)]
+testF <- testNZV[, -c(1:7)]
+```
+
+And I double checked if there is any feature that has missing values using the nearZeroVar function below.
+```{r message=FALSE, warning=FALSE,results='hide'}
+NZVtr <- nearZeroVar(trainF, saveMetrics=TRUE)
+NZVte <- nearZeroVar(testF, saveMetrics=TRUE)
+NZVtr
+NZVte
+```
+
+After the above steps, all training and test files have 53 columns left.
+```{r warning=FALSE}
+dim(trainF)
+dim(testF)
+```
+
+In order to perform the prediction on the testing dataset, I made sure that the training data and testing data have the exact same column names.
+```{r warning=FALSE}
+colnames_trainF <- colnames(trainF)
+colnames_testF <- colnames(testF)
+all.equal(colnames_trainF[1:length(colnames_trainF)-1], colnames_testF[1:length(colnames_testF)-1])
+```
+
+##Step 3: Partition the Data
+After cleaning up the data, this step is to split the training data into two datasets, with 60% of them as training and 40% as testing. 
+```{r warning=FALSE}
+set.seed(201703)
+inTrain <- createDataPartition(y=trainF$classe, p=0.6, list=FALSE)
+myTrain <- trainF[inTrain, ]
+myTest <- trainF[-inTrain, ]
+dim(myTrain)
+dim(myTest)
+```
+
+##Step 4:Model Building 
+
+###1.Prediction with Decision Trees
+Since this is a classification problem, I first tried to use the decision tree to train the data. 
+```{r warning=FALSE}
+set.seed(201703)
+modFit<-train(classe~.,method="rpart", data=myTrain)
+print(modFit$finalModel)
+fancyRpartPlot(modFit$finalModel,cex=.5,under.cex=1,shadow.offset=0)
+pred<-predict(modFit,myTest)
+confusionMatrix(myTest$classe,pred)
+```
+The result is disappointing with only 0.4908 accuracy. And the prediction of class D is the worst as none of the test data is predicted as class D. And class E has the highest accuracy which is 0.9921. 
+
+###2.Prediction with Random Forest 
+As the decision tree didn't work out, I tried the random forest algorithm next. And in order to prevent overfitting, I used cross validation as the resampling method with 4 folds.
+
+```{r warning=FALSE}
+set.seed(201703)
+modFit2 <- train(classe ~ ., method="rf",trControl=trainControl(method = "cv", number = 4), data=myTrain)
+print(modFit2)
+varImp(modFit2)
+pred2<-predict(modFit2,myTest)
+confusionMatrix(myTest$classe,pred2)
+```
+The results turned out to be way better than decision tress with 0.9908 accuracy on the testing dataset. And the top five features that have the most impact are roll_belt, pitch_forearm, yaw_belt, pitch_belt and magnet_dumbbell. This model also has 0.98+ accuracy on all classes in this experiment, which proves the effectiveness of this model. 
+
+###3.Prediction with Gradient Boosted Trees
+Although the random forest already gave a very powerful prediction, I also wanted to compare it with the gradient boosted trees to see which one works better in this case.
+
+```{r message=FALSE, warning=FALSE,results='hide'}
+set.seed(201703)
+modFit3 <- train(classe ~ ., method="gbm",trControl=trainControl(method = "cv", number = 4), data=myTrain)
+```
+
+```{r message=FALSE, warning=FALSE}
+print(modFit3)
+varImp(modFit3)
+pred3<-predict(modFit3,myTest)
+confusionMatrix(myTest$classe,pred3)
+```
+
+Gradient boosted trees gave an accuracy of 0.9621, which is a little less than random forest method. And the top five features that have the most impact are roll_belt, pitch_forearm, yaw_belt, magnet_dumbbell_z and magnet_dumbbell_y.
+
+##Step 5: Conclusion and Predicting on the Test Data
+To conclude, the random forest method has the highest accuracy which result to the lowest out of sample error rate(1-0.9908=0.0092). So I used the second model to predict the test data and got the following results.
+
+```{r message=FALSE, warning=FALSE}
+testingAnswers<-predict(modFit2, newdata=testF)
+testingAnswers
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+```
